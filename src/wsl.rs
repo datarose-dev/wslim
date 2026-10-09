@@ -93,11 +93,14 @@ fn version_from_listing(listing: &str, name: &str) -> Option<u8> {
 
 // Redirected wsl.exe output is UTF-16LE on many Windows builds.
 fn decode_output(bytes: &[u8]) -> String {
-    if bytes.starts_with(&[0xff, 0xfe]) || bytes.chunks_exact(2).take(64).any(|pair| pair[1] == 0) {
-        let units = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+    let (pairs, _) = bytes.as_chunks::<2>();
+
+    if bytes.starts_with(&[0xff, 0xfe]) || pairs.iter().take(64).any(|pair| pair[1] == 0) {
+        let units = pairs
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect::<Vec<_>>();
+
         String::from_utf16_lossy(&units)
             .trim_start_matches('\u{feff}')
             .to_owned()
