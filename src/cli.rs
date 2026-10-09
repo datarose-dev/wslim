@@ -68,6 +68,7 @@ impl CompressionFormat {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum ConfigKey {
     #[value(name = "backup.output")]
