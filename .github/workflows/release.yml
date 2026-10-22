@@ -1,4 +1,6 @@
-name: Release Windows binary
+name: Release
+
+run-name: ${{ startsWith(github.ref, 'refs/tags/v') && format('Release {0}', github.ref_name) || 'Release' }}
 
 on:
   push:
@@ -8,22 +10,96 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: calver-release
+  cancel-in-progress: false
+
 jobs:
-  windows:
+  release:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+      - name: Prepare release version
+        if: github.event_name == 'workflow_dispatch'
+        id: calver
+        shell: pwsh
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: ./scripts/calver.ps1 Prepare -OutputFile $env:GITHUB_OUTPUT -SummaryFile $env:GITHUB_STEP_SUMMARY
+      - name: Validate release tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        id: validate
+        shell: pwsh
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/calver.ps1 ValidateTag -Tag $env:TAG -OutputFile $env:GITHUB_OUTPUT -SummaryFile $env:GITHUB_STEP_SUMMARY
       - name: Test
-        run: cargo test
+        run: cargo test --locked
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --locked
       - name: Package portable executable
         shell: pwsh
+        run: Compress-Archive -Path target/release/wslim.exe -DestinationPath wslim-windows-x86_64.zip
+      - name: Push prepared commit and tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_BASE: ${{ steps.calver.outputs.base }}
+          RELEASE_COMMIT: ${{ steps.calver.outputs.commit }}
+          RELEASE_TAG: ${{ steps.calver.outputs.tag }}
         run: |
-          Compress-Archive -Path target/release/wslim.exe -DestinationPath wslim-windows-x86_64.zip
+          $head = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve HEAD.' }
+          $head = $head.Trim()
+          if ($head -ne $env:RELEASE_COMMIT) { throw 'HEAD differs from prepared release commit.' }
+          $base = git rev-parse 'HEAD^'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve prepared commit parent.' }
+          $base = $base.Trim()
+          if ($base -ne $env:RELEASE_BASE) { throw 'Prepared commit parent differs from release base.' }
+          $remote = git ls-remote origin "refs/heads/$($env:DEFAULT_BRANCH)"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify remote default branch.' }
+          $remoteBase = ($remote -split '\s+')[0]
+          if ($remoteBase -ne $env:RELEASE_BASE) { throw 'Remote default branch advanced; refusing release push.' }
+          $tagCommit = git rev-parse "$($env:RELEASE_TAG)^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve local release tag.' }
+          $tagCommit = $tagCommit.Trim()
+          if ($tagCommit -ne $env:RELEASE_COMMIT) { throw 'Local release tag differs from prepared commit.' }
+          git push --atomic "--force-with-lease=refs/heads/$($env:DEFAULT_BRANCH):$($env:RELEASE_BASE)" origin "HEAD:refs/heads/$($env:DEFAULT_BRANCH)" "refs/tags/$($env:RELEASE_TAG)"
+          if ($LASTEXITCODE -ne 0) { throw 'Atomic release push failed.' }
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: wslim-windows-x86_64.zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.calver.outputs.tag || steps.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ steps.calver.outputs.version || steps.validate.outputs.version }}
+          RELEASE_COMMIT: ${{ steps.calver.outputs.commit || steps.validate.outputs.commit }}
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_VERSION -replace '^v', ''
+          $target = git rev-parse "$($env:RELEASE_TAG)^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not resolve release target commit.' }
+          $target = $target.Trim()
+          if ($target -ne $env:RELEASE_COMMIT) { throw 'Local release target changed.' }
+          $tag = $env:RELEASE_TAG
+          $refs = @(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify remote release tag.' }
+          $peeled = @($refs | Where-Object { $_.EndsWith('^{}') })
+          $resolved = if ($peeled.Count -eq 1) {
+            $peeled[0]
+          } elseif ($refs.Count -eq 1) {
+            $refs[0]
+          } else {
+            throw 'Missing or ambiguous remote release tag.'
+          }
+          if (($resolved -split '\s+', 2)[0] -ne $env:RELEASE_COMMIT) { throw 'Remote release tag changed.' }
+          gh release create $env:RELEASE_TAG wslim-windows-x86_64.zip --target $target --title "Release v$version" --verify-tag --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release publication failed.' }
