@@ -1,6 +1,6 @@
 [package]
 name = "wslim"
-version = "0.1.0"
+version = "2026.10.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "Safe, filtered, restorable WSL backups for Windows"
