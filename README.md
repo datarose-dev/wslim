@@ -10,7 +10,7 @@ Output naming: `{distro}-backup-yyyy-mm-dd-HHmmss.tar.xz` or `.tar.gz` (local Wi
 
 - Windows with WSL installed and at least one registered distribution (WSL 1 or 2).
 - Sufficient free disk space for two TAR exports and temporary imported distributions.
-- `/bin/sh`, `find` and `rm` in the selected Linux distribution.
+- `/bin/sh`, `cat` and `rm` in the selected Linux distribution.
 - Launch `wslim.exe` from **Windows PowerShell, CMD or Windows Terminal**, not from inside WSL.
 
 ## Interactive mode
@@ -86,6 +86,8 @@ wslim config list --json                      # Machine-readable settings
 
 When changing `backup.output`, the interactive prompt shows the current directory in parentheses. The direct `config set` and `config backup.output` commands print the previous value after saving (for example, `backup.output set to E:\WSLBackups (previous: D:\WSLBackups)`). JSON output remains machine-readable and unchanged.
 
+Settings are saved by atomic file replacement. Before a JSON-mode `set` or `unset` writes the file, it validates all supported settings in the resulting snapshot. You can repair an invalid value, but an unrelated invalid setting rejects the update and leaves the file unchanged. Without `--json`, direct single-key edits do not validate unrelated values. Atomic replacement does not serialize concurrent settings edits.
+
 The backup destination is resolved as **`--output` / `--target` > saved `backup.output` > interactive input**. If no path is configured and prompting is disabled, backup fails with a nonzero exit code.
 
 Before the original WSL distro is stopped, `wslim` creates the destination directory when possible, checks it is writable, and verifies it can create/remove a disposable probe file. If it cannot access the destination (e.g. an external drive is disconnected), interactive mode prints the error and asks for another Windows directory. It does not automatically rewrite your saved preference. In `--non-interactive` or `--json` mode, the same error is reported without prompting, so calling programs can react reliably.
@@ -106,8 +108,6 @@ wslim backup dev --output E:\WSLBackups --yes --non-interactive --json
 | `--yes`, `-y` | backup | Approve source termination without prompting |
 | `--cleanup node,php,rust,caches` | backup, preview | Select cleanup groups; defaults to all |
 | `--cleanup none` | backup, preview | Keep all project dependencies and caches |
-
-For backups, `--cleanup none` also skips temporary stage-distro import and cleanup. The optional test-restore remains independent and can still import a temporary verification distro.
 | `--format xz\|gz` | backup | Override compression format; default `backup.format` or xz |
 | `--level 0..9` | backup | Override compression level; default `backup.level` or 6 |
 | `--xz-level 0..9` | backup | Backwards-compatible alias for `--level` |
@@ -118,6 +118,8 @@ For backups, `--cleanup none` also skips temporary stage-distro import and clean
 | `--non-interactive` | global | Fail instead of prompting; useful for integrations |
 | `--no-progress` | global | Disable spinners and byte progress bars |
 | `--json` | global | Emit exactly one JSON result on stdout |
+
+For backups, `--cleanup none` also skips temporary stage-distro import and cleanup. The optional test-restore remains independent and can still import a temporary verification distro.
 
 `--json` writes human-readable errors to stderr and returns a nonzero exit code on failure. The successful JSON payloads have stable, simple shapes:
 
@@ -138,12 +140,17 @@ Spinners from [indicatif](https://github.com/console-rs/indicatif) render on std
 5. Unless `--no-verify` was provided, test-import the selected TAR, run `/bin/sh`, and unregister the test distro on success.
 6. Compress with the selected XZ or Gzip format, verify the complete compressed stream, and publish the final archive.
 7. Remove the selected TAR and remaining scratch files on normal completion or recoverable errors.
+Only successful imports authorize automatic termination and unregistration of temporary distros. A failed or interrupted temporary import, or unresolved termination or unregistration, retains the entire workspace for manual inspection. Successfully imported clones may still be torn down, but unresolved storage is retained. Warnings identify the affected distro and storage paths. A matching registered name after a failed import does not prove ownership and is never automatically unregistered. Automatic teardown assumes no external process replaces a successfully imported temporary distro.
 
-The tool does not touch Windows-side WSL config, external mounts, or external databases. Its boot test confirms only a basic shell launch, not every service or project. Stop active workloads and separately back up live databases before running an export.
+Archive verification reads every concatenated XZ stream or Gzip member and checks its integrity. Restore uses the same complete decoding and checks. `--no-verify` skips only the test import and shell launch, not archive integrity checks. A timestamp collision fails without replacing the existing archive, even if the destination appears during backup.
+
+The source is never cleaned or unregistered, but the clone is **not a security sandbox**. Copied `/etc/fstab`, `/etc/wsl.conf`, boot commands, or systemd services may mount external storage or start processes before cleanup runs. Use a trusted distro with stable mounts and quiescent workloads. Cleanup guards limit the cleanup script's actions; they do not isolate startup configuration or eliminate concurrent mount or path races. The boot test confirms only a basic shell launch, not every service or project. Back up live external databases separately.
 
 ### Cleanup policy
 
-The embedded `src/cleanup.sh` scans `/home`, `/root`, `/workspace`, `/workspaces`, `/srv` and `/opt` without crossing mount boundaries.
+The embedded `src/cleanup.sh` scans `/home`, `/root`, `/workspace`, `/workspaces`, `/srv` and `/opt`. Preview and cleanup use the same guards: all non-root mountpoints are protected, and a candidate directory containing a mount is never deleted. Paths with symlink components are rejected.
+
+When cleanup is enabled, `/proc/self/mountinfo` must be readable and valid. Cleanup fails closed if mount metadata is missing, malformed, or unsupported. These checks assume mounts and paths remain stable while the script runs; they cannot prevent concurrent changes.
 
 | Group | Candidate | Required marker |
 | --- | --- | --- |
@@ -156,7 +163,7 @@ The embedded `src/cleanup.sh` scans `/home`, `/root`, `/workspace`, `/workspaces
 
 ## Restore
 
-Restore imports a new WSL distribution. It cannot replace an existing registered distro or existing install directory. The tool detects `.tar.xz` or `.tar.gz` from the filename and decompresses to a temporary TAR and imports that TAR with `wsl.exe --import`. A failed partially registered restore is deliberately left for inspection rather than deleted automatically.
+Restore imports a new WSL distribution. It cannot replace an existing registered distro or existing install directory. The tool detects `.tar.xz` or `.tar.gz` from the filename and decompresses the complete archive to a temporary TAR while checking integrity. It then imports that TAR with `wsl.exe --import`. If import fails, the requested install directory and any partial registration are left for inspection. Warnings provide the requested path; diagnostic failures do not replace the original import error. A matching registered name does not prove ownership, so it is never automatically unregistered after a failed import.
 
 An imported distro may default to root unless `/etc/wsl.conf` specifies the intended user. For WSL 1 archives, pass `--version 1`. A full, unfiltered archive is available via `--cleanup none`; even then, files outside the WSL rootfs and live external databases need separate backups.
 
@@ -191,11 +198,13 @@ This project only targets Windows x64. `Cargo.lock` should be generated and comm
 | `backup.rs` and `restore.rs` | Backup and restore workflows |
 | `wsl.rs` | WSL calls, distro discovery and clone lifecycle |
 | `cleanup.rs` and `cleanup.sh` | Shared cleanup implementation |
-| `archive.rs` | XZ I/O and validation |
-| `workspace.rs` | Temporary file cleanup |
+| `archive.rs` | XZ and Gzip I/O and validation |
+| `workspace.rs` | Scratch cleanup and retention for unresolved distro ownership |
 
 ## Safety and testing
 
-A backup can contain secrets; the `.tar.xz` format **does not encrypt** them. Keep archives on secured storage with an independent copy.
+A backup can contain secrets; neither `.tar.xz` nor `.tar.gz` **encrypts** them. Keep archives on secured storage with an independent copy.
 
-The source is provided without a validated live Windows/WSL integration run. Test against a disposable distro and verify a restoration before entrusting it with irreplaceable data. A forced process kill may leave temporary `wslim-stage-*` / `wslim-test-*` distributions; verify ownership before unregistering any of them.
+`cargo test` includes the sandbox checks in `tests/cleanup-fixtures.sh`. On Windows, these checks use standard Git Bash and skip when it is unavailable. They do not validate live mounts or WSL.
+
+Live Windows/WSL integration validation has **not been performed**. Test against a disposable distro and verify a restoration before entrusting it with irreplaceable data. Failed imports, unresolved teardown, or a forced process kill may leave `.wslim-work-*` directories and temporary `wslim-stage-*` / `wslim-test-*` distributions. Inspect the reported paths and verify ownership before deleting storage or unregistering any distro.
