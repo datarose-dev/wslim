@@ -101,5 +101,5 @@ jobs:
             throw 'Missing or ambiguous remote release tag.'
           }
           if (($resolved -split '\s+', 2)[0] -ne $env:RELEASE_COMMIT) { throw 'Remote release tag changed.' }
-          gh release create $env:RELEASE_TAG wslim-windows-x86_64.zip --target $target --title "Release v$version" --verify-tag --generate-notes
+          gh release create $env:RELEASE_TAG wslim-windows-x86_64.zip --target $target --title "v$version" --verify-tag --generate-notes
           if ($LASTEXITCODE -ne 0) { throw 'GitHub release publication failed.' }
