@@ -42,7 +42,7 @@ pub(crate) fn run(options: BackupArgs, non_interactive: bool, progress: Progress
         }
         interactive::ensure_terminal()?;
         eprintln!("Backup of '{distro}' (WSL {version}) will terminate its running processes.");
-        eprintln!("Cleanup only changes a temporary clone; the source is never cleaned.");
+        eprintln!("Cleanup changes only a temporary clone; --cleanup none exports the source directly.");
         if !Confirm::new("Continue?").with_default(false).prompt()? {
             return Err("Backup cancelled; nothing changed".into());
         }
@@ -65,20 +65,25 @@ pub(crate) fn run(options: BackupArgs, non_interactive: bool, progress: Progress
         wsl::export(&distro, &raw)
     })?;
 
-    progress.step("Importing disposable clone", || temporary.import(&stage, &work.path.join("stage"), &raw, version))?;
-    fs::remove_file(&raw)?;
+    let no_cleanup = options.cleanup.cleanup == [crate::cli::CleanupGroup::None];
+    if no_cleanup {
+        fs::rename(&raw, &cleaned)?;
+    } else {
+        progress.step("Importing disposable clone", || temporary.import(&stage, &work.path.join("stage"), &raw, version))?;
+        fs::remove_file(&raw)?;
 
-    progress.step("Removing generated dependencies from the clone", || -> Result<()> {
-        let removed = cleanup::run(&stage, Mode::Clean, &options.cleanup)?;
-        eprintln!("Cleanup: {} directories", removed.len());
-        wsl::run(&["--terminate", &stage])
-    })?;
+        progress.step("Removing generated dependencies from the clone", || -> Result<()> {
+            let removed = cleanup::run(&stage, Mode::Clean, &options.cleanup)?;
+            eprintln!("Cleanup: {} directories", removed.len());
+            wsl::run(&["--terminate", &stage])
+        })?;
 
-    progress.step("Exporting cleaned clone", || wsl::export(&stage, &cleaned))?;
+        progress.step("Exporting cleaned clone", || wsl::export(&stage, &cleaned))?;
 
-    // The cleaned TAR no longer depends on the imported clone. Free its disk
-    // before creating the test distro to keep peak temporary storage lower.
-    progress.step("Removing disposable clone", || temporary.unregister(&stage))?;
+        // The cleaned TAR no longer depends on the imported clone. Free its disk
+        // before creating the test distro to keep peak temporary storage lower.
+        progress.step("Removing disposable clone", || temporary.unregister(&stage))?;
+    }
 
     if !options.no_verify {
         progress.step("Testing the restored distro", || -> Result<()> {

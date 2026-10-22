@@ -88,7 +88,7 @@ fn select_distro() -> Result<String> {
 
 fn select_cleanup() -> Result<CleanupOptions> {
     let groups = vec![CleanupGroup::Node, CleanupGroup::Php, CleanupGroup::Rust, CleanupGroup::Caches];
-    let chosen = MultiSelect::new("Remove generated dependencies from the temporary clone:", groups)
+    let chosen = MultiSelect::new("Remove generated dependencies from a temporary clone (clear selection to export source directly):", groups)
         .with_all_selected_by_default()
         .prompt()?;
     Ok(CleanupOptions { cleanup: if chosen.is_empty() { vec![CleanupGroup::None] } else { chosen } })
