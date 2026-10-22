@@ -1,0 +1,29 @@
+name: Release Windows binary
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        run: cargo test
+      - name: Build release binary
+        run: cargo build --release
+      - name: Package portable executable
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/release/wslim.exe -DestinationPath wslim-windows-x86_64.zip
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: wslim-windows-x86_64.zip
