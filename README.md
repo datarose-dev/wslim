@@ -2,7 +2,7 @@
 
 Minimal Windows CLI for **restorable WSL distribution backups** without generated project dependencies.
 
-`wslim` exports a stopped source distribution, imports a disposable clone, removes selected generated directories **only in that clone**, and creates a verified `.tar.xz` or `.tar.gz` archive using a second native WSL export. The original distro's files are never cleaned or unregistered.
+`wslim` exports a stopped source distribution, imports a disposable clone, removes selected generated directories **only in that clone**, and creates a verified `.tar.xz` or `.tar.gz` archive using a second native WSL export. With `--cleanup none`, it skips the clone and cleanup, using the source export directly. The original distro's files are never cleaned or unregistered.
 
 Output naming: `{distro}-backup-yyyy-mm-dd-HHmmss.tar.xz` or `.tar.gz` (local Windows time).
 
@@ -106,6 +106,8 @@ wslim backup dev --output E:\WSLBackups --yes --non-interactive --json
 | `--yes`, `-y` | backup | Approve source termination without prompting |
 | `--cleanup node,php,rust,caches` | backup, preview | Select cleanup groups; defaults to all |
 | `--cleanup none` | backup, preview | Keep all project dependencies and caches |
+
+For backups, `--cleanup none` also skips temporary stage-distro import and cleanup. The optional test-restore remains independent and can still import a temporary verification distro.
 | `--format xz\|gz` | backup | Override compression format; default `backup.format` or xz |
 | `--level 0..9` | backup | Override compression level; default `backup.level` or 6 |
 | `--xz-level 0..9` | backup | Backwards-compatible alias for `--level` |
@@ -130,12 +132,12 @@ Spinners from [indicatif](https://github.com/console-rs/indicatif) render on std
 ## Backup lifecycle
 
 1. Stop the selected source distro and export it as a TAR.
-2. Import that TAR into an isolated temporary distro, preserving WSL version; delete the original TAR after import succeeds.
+2. With cleanup enabled, import that TAR into an isolated temporary distro, preserving WSL version; delete the original TAR after import succeeds.
 3. Clean only the temporary clone. The source files remain unchanged.
-4. Export the cleaned clone as another TAR, then unregister the stage distro immediately to free its disk.
-5. Unless `--no-verify` was provided, test-import the cleaned TAR, run `/bin/sh`, and unregister the test distro on success.
+4. Export the cleaned clone as another TAR, then unregister the stage distro immediately to free its disk. With `--cleanup none`, use the source TAR directly and skip this stage distro.
+5. Unless `--no-verify` was provided, test-import the selected TAR, run `/bin/sh`, and unregister the test distro on success.
 6. Compress with the selected XZ or Gzip format, verify the complete compressed stream, and publish the final archive.
-7. Remove the cleaned TAR and remaining scratch files on normal completion or recoverable errors.
+7. Remove the selected TAR and remaining scratch files on normal completion or recoverable errors.
 
 The tool does not touch Windows-side WSL config, external mounts, or external databases. Its boot test confirms only a basic shell launch, not every service or project. Stop active workloads and separately back up live databases before running an export.
 
