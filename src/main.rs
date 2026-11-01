@@ -30,15 +30,22 @@ fn run() -> Result<()> {
     }
     let command = match args.command {
         Some(command) => command,
-        None if args.non_interactive || args.json => return Err("A subcommand is required in non-interactive or JSON mode".into()),
+        None if args.non_interactive || args.json => {
+            return Err("A subcommand is required in non-interactive or JSON mode".into())
+        }
         None => interactive::choose()?,
     };
     let progress = progress::Progress::new(args.no_progress || args.json);
     match command {
         cli::Command::List => {
             let names = wsl::installed_distros()?;
-            if args.json { println!("{}", serde_json::to_string(&names)?); }
-            else { for name in names { println!("{name}"); } }
+            if args.json {
+                println!("{}", serde_json::to_string(&names)?);
+            } else {
+                for name in names {
+                    println!("{name}");
+                }
+            }
         }
         cli::Command::Preview { distro, cleanup } => {
             cleanup.validate()?;
@@ -48,15 +55,24 @@ fn run() -> Result<()> {
                 println!("{}", serde_json::json!({"distro": distro, "paths": paths}));
             } else {
                 println!("Generated directories in {distro} (nothing deleted):");
-                for path in paths { println!("{path}"); }
+                for path in paths {
+                    println!("{path}");
+                }
             }
         }
         cli::Command::Backup(options) => {
             let outcome = backup::run(options, args.non_interactive || args.json, progress)?;
             if args.json {
-                println!("{}", serde_json::json!({"distro": outcome.distro, "archive": outcome.path, "size_bytes": outcome.bytes}));
+                println!(
+                    "{}",
+                    serde_json::json!({"distro": outcome.distro, "archive": outcome.path, "size_bytes": outcome.bytes})
+                );
             } else {
-                println!("Backup saved: {} ({} bytes)", outcome.path.display(), outcome.bytes);
+                println!(
+                    "Backup saved: {} ({} bytes)",
+                    outcome.path.display(),
+                    outcome.bytes
+                );
             }
         }
         cli::Command::Config { action } => {
@@ -65,9 +81,15 @@ fn run() -> Result<()> {
         cli::Command::Restore(options) => {
             let outcome = restore::run(options, progress)?;
             if args.json {
-                println!("{}", serde_json::json!({"distro": outcome.name, "install_dir": outcome.directory}));
+                println!(
+                    "{}",
+                    serde_json::json!({"distro": outcome.name, "install_dir": outcome.directory})
+                );
             } else {
-                println!("Restored: {}. Start with: wsl -d \"{}\"", outcome.name, outcome.name);
+                println!(
+                    "Restored: {}. Start with: wsl -d \"{}\"",
+                    outcome.name, outcome.name
+                );
             }
         }
     }
