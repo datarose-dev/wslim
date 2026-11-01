@@ -20,7 +20,7 @@ pub(crate) fn run(distro: &str, mode: Mode, options: &CleanupOptions) -> Result<
         distro,
         "-u",
         "root",
-        "--",
+        "--exec",
         "/bin/sh",
         "-c",
         &script,
