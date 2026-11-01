@@ -136,10 +136,10 @@ Spinners from [indicatif](https://github.com/console-rs/indicatif) render on std
 1. Stop the selected source distro and export it as a TAR.
 2. With cleanup enabled, import that TAR into an isolated temporary distro, preserving WSL version; delete the original TAR after import succeeds.
 3. Clean only the temporary clone. The source files remain unchanged.
-4. Export the cleaned clone as another TAR, then unregister the stage distro immediately to free its disk. With `--cleanup none`, use the source TAR directly and skip this stage distro.
-5. Unless `--no-verify` was provided, test-import the selected TAR, run `/bin/sh`, and unregister the test distro on success.
-6. Compress with the selected XZ or Gzip format, verify the complete compressed stream, and publish the final archive.
-7. Remove the selected TAR and remaining scratch files on normal completion or recoverable errors.
+4. Export the cleaned clone as another TAR, then terminate and unregister the stage distro to free its disk. With `--cleanup none`, use the source TAR directly and skip this stage distro.
+5. Unless `--no-verify` was provided, test-import the selected TAR, run `/bin/sh`, then terminate and unregister the test distro on success.
+6. Compress with the selected XZ or Gzip format, verify the complete compressed stream, and atomically publish the final archive without overwriting an existing path.
+7. Remove the selected TAR and remaining scratch files only when temporary distro ownership and teardown are safely resolved.
 Only successful imports authorize automatic termination and unregistration of temporary distros. A failed or interrupted temporary import, or unresolved termination or unregistration, retains the entire workspace for manual inspection. Successfully imported clones may still be torn down, but unresolved storage is retained. Warnings identify the affected distro and storage paths. A matching registered name after a failed import does not prove ownership and is never automatically unregistered. Automatic teardown assumes no external process replaces a successfully imported temporary distro.
 
 Archive verification reads every concatenated XZ stream or Gzip member and checks its integrity. Restore uses the same complete decoding and checks. `--no-verify` skips only the test import and shell launch, not archive integrity checks. A timestamp collision fails without replacing the existing archive, even if the destination appears during backup.
