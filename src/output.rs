@@ -2,7 +2,11 @@
 
 use crate::{config, interactive, Result};
 use inquire::Text;
-use std::{fs::{self, OpenOptions}, io::Write, path::{Path, PathBuf}};
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 pub(crate) fn resolve(explicit: Option<PathBuf>, non_interactive: bool) -> Result<PathBuf> {
     // Explicit arguments always override the saved preference.
@@ -21,10 +25,17 @@ pub(crate) fn resolve(explicit: Option<PathBuf>, non_interactive: bool) -> Resul
         match check_writable(&path) {
             Ok(valid) => return Ok(valid),
             Err(error) if non_interactive => {
-                return Err(format!("Backup destination '{}' is unavailable: {error}", path.display()).into());
+                return Err(format!(
+                    "Backup destination '{}' is unavailable: {error}",
+                    path.display()
+                )
+                .into());
             }
             Err(error) => {
-                eprintln!("Backup destination '{}' is unavailable: {error}", path.display());
+                eprintln!(
+                    "Backup destination '{}' is unavailable: {error}",
+                    path.display()
+                );
                 eprintln!("No WSL distribution has been stopped or modified.");
                 choice = Some(prompt(Some(&path))?);
             }
@@ -34,11 +45,17 @@ pub(crate) fn resolve(explicit: Option<PathBuf>, non_interactive: bool) -> Resul
 
 fn prompt(previous: Option<&Path>) -> Result<PathBuf> {
     interactive::ensure_terminal()?;
-    let initial = previous.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    let initial = previous
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut question = Text::new("Windows backup directory:");
-    if !initial.is_empty() { question = question.with_default(&initial); }
+    if !initial.is_empty() {
+        question = question.with_default(&initial);
+    }
     let text = question.prompt()?;
-    if text.trim().is_empty() { return Err("Backup destination cannot be empty".into()); }
+    if text.trim().is_empty() {
+        return Err("Backup destination cannot be empty".into());
+    }
     Ok(PathBuf::from(text.trim()))
 }
 
@@ -53,7 +70,10 @@ fn check_writable(path: &Path) -> Result<PathBuf> {
     // A read-only mount may allow directory listing but reject writes.
     // Use create_new to avoid touching any existing user files.
     for attempt in 0..8 {
-        let probe = directory.join(format!(".wslim-write-test-{}-{attempt}", std::process::id()));
+        let probe = directory.join(format!(
+            ".wslim-write-test-{}-{attempt}",
+            std::process::id()
+        ));
         match OpenOptions::new().write(true).create_new(true).open(&probe) {
             Ok(mut file) => {
                 let tested = file.write_all(b"wslim");
