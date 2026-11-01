@@ -4,7 +4,11 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "wslim", version, about = "Restorable, space-efficient WSL backups")]
+#[command(
+    name = "wslim",
+    version,
+    about = "Restorable, space-efficient WSL backups"
+)]
 pub(crate) struct Cli {
     /// Never prompt for input. Missing parameters or approval are errors.
     #[arg(long, global = true)]
@@ -51,20 +55,32 @@ pub(crate) enum CompressionFormat {
 
 impl CompressionFormat {
     pub(crate) fn as_str(self) -> &'static str {
-        match self { Self::Xz => "xz", Self::Gz => "gz" }
+        match self {
+            Self::Xz => "xz",
+            Self::Gz => "gz",
+        }
     }
 
     pub(crate) fn label(self) -> &'static str {
-        match self { Self::Xz => "XZ", Self::Gz => "Gzip" }
+        match self {
+            Self::Xz => "XZ",
+            Self::Gz => "Gzip",
+        }
     }
 
-    pub(crate) fn extension(self) -> &'static str { self.as_str() }
+    pub(crate) fn extension(self) -> &'static str {
+        self.as_str()
+    }
 
     pub(crate) fn from_archive_path(path: &std::path::Path) -> crate::Result<Self> {
         let path = path.to_string_lossy().to_ascii_lowercase();
-        if path.ends_with(".tar.xz") { Ok(Self::Xz) }
-        else if path.ends_with(".tar.gz") { Ok(Self::Gz) }
-        else { Err("Unsupported archive extension (expected .tar.xz or .tar.gz)".into()) }
+        if path.ends_with(".tar.xz") {
+            Ok(Self::Xz)
+        } else if path.ends_with(".tar.gz") {
+            Ok(Self::Gz)
+        } else {
+            Err("Unsupported archive extension (expected .tar.xz or .tar.gz)".into())
+        }
     }
 }
 
@@ -128,7 +144,12 @@ impl CleanupGroup {
 #[derive(Debug, Clone, Args)]
 pub(crate) struct CleanupOptions {
     /// Cleanup groups: node,php,rust,caches or none.
-    #[arg(long, value_enum, value_delimiter = ',', default_value = "node,php,rust,caches")]
+    #[arg(
+        long,
+        value_enum,
+        value_delimiter = ',',
+        default_value = "node,php,rust,caches"
+    )]
     pub(crate) cleanup: Vec<CleanupGroup>,
 }
 
@@ -141,7 +162,11 @@ impl CleanupOptions {
     }
 
     pub(crate) fn flags(&self) -> String {
-        self.cleanup.iter().map(|group| group.flag()).collect::<Vec<_>>().join(",")
+        self.cleanup
+            .iter()
+            .map(|group| group.flag())
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 
@@ -199,68 +224,124 @@ mod tests {
     #[test]
     fn all_backup_options_are_scriptable() {
         let args = Cli::try_parse_from([
-            "wslim", "--non-interactive", "--no-progress", "--json", "backup", "dev",
-            "--output", "D:\\Backups", "--yes", "--no-verify", "--format", "gz", "--level", "3",
-            "--cleanup", "node,rust",
-        ]).unwrap();
+            "wslim",
+            "--non-interactive",
+            "--no-progress",
+            "--json",
+            "backup",
+            "dev",
+            "--output",
+            "D:\\Backups",
+            "--yes",
+            "--no-verify",
+            "--format",
+            "gz",
+            "--level",
+            "3",
+            "--cleanup",
+            "node,rust",
+        ])
+        .unwrap();
         assert!(args.non_interactive && args.no_progress && args.json);
-        let Some(Command::Backup(backup)) = args.command else { panic!("expected backup"); };
+        let Some(Command::Backup(backup)) = args.command else {
+            panic!("expected backup");
+        };
         assert_eq!(backup.level, Some(3));
         assert_eq!(backup.format, Some(CompressionFormat::Gz));
-        assert_eq!(backup.cleanup.cleanup, vec![CleanupGroup::Node, CleanupGroup::Rust]);
+        assert_eq!(
+            backup.cleanup.cleanup,
+            vec![CleanupGroup::Node, CleanupGroup::Rust]
+        );
     }
 
     #[test]
     fn rejects_unknown_or_invalid_options() {
-        assert!(Cli::try_parse_from(["wslim", "backup", "dev", "--output", "x", "--unknown"]).is_err());
-        assert!(Cli::try_parse_from(["wslim", "backup", "dev", "--output", "x", "--level", "10"]).is_err());
+        assert!(
+            Cli::try_parse_from(["wslim", "backup", "dev", "--output", "x", "--unknown"]).is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["wslim", "backup", "dev", "--output", "x", "--level", "10"])
+                .is_err()
+        );
         assert!(Cli::try_parse_from(["wslim", "restore", "backup.tar.xz", "--as", "dev"]).is_err());
         assert!(Cli::try_parse_from(["wslim", "config", "set", "bad.key", "somewhere"]).is_err());
     }
 
     #[test]
     fn backup_destination_can_come_from_config() {
-        let parsed = Cli::try_parse_from(["wslim", "backup", "dev", "--yes", "--non-interactive"]).unwrap();
-        let Some(Command::Backup(backup)) = parsed.command else { panic!("expected backup"); };
+        let parsed =
+            Cli::try_parse_from(["wslim", "backup", "dev", "--yes", "--non-interactive"]).unwrap();
+        let Some(Command::Backup(backup)) = parsed.command else {
+            panic!("expected backup");
+        };
         assert!(backup.output.is_none());
     }
 
     #[test]
     fn target_alias_is_available_for_scripts() {
-        let parsed = Cli::try_parse_from(["wslim", "backup", "dev", "--target", "D:\\Backups"]).unwrap();
-        let Some(Command::Backup(backup)) = parsed.command else { panic!("expected backup"); };
+        let parsed =
+            Cli::try_parse_from(["wslim", "backup", "dev", "--target", "D:\\Backups"]).unwrap();
+        let Some(Command::Backup(backup)) = parsed.command else {
+            panic!("expected backup");
+        };
         assert_eq!(backup.output, Some(PathBuf::from("D:\\Backups")));
     }
 
     #[test]
     fn backward_compatible_xz_level_alias() {
         let parsed = Cli::try_parse_from(["wslim", "backup", "dev", "--xz-level", "3"]).unwrap();
-        let Some(Command::Backup(backup)) = parsed.command else { panic!("expected backup"); };
+        let Some(Command::Backup(backup)) = parsed.command else {
+            panic!("expected backup");
+        };
         assert_eq!(backup.level, Some(3));
     }
 
     #[test]
     fn archive_extensions() {
-        assert_eq!(CompressionFormat::from_archive_path(std::path::Path::new("backup.tar.gz")).unwrap(), CompressionFormat::Gz);
-        assert_eq!(CompressionFormat::from_archive_path(std::path::Path::new("backup.tar.xz")).unwrap(), CompressionFormat::Xz);
+        assert_eq!(
+            CompressionFormat::from_archive_path(std::path::Path::new("backup.tar.gz")).unwrap(),
+            CompressionFormat::Gz
+        );
+        assert_eq!(
+            CompressionFormat::from_archive_path(std::path::Path::new("backup.tar.xz")).unwrap(),
+            CompressionFormat::Xz
+        );
         assert!(CompressionFormat::from_archive_path(std::path::Path::new("backup.zip")).is_err());
     }
 
     #[test]
     fn config_set_parses_dotted_key() {
-        let parsed = Cli::try_parse_from(["wslim", "config", "set", "backup.output", "D:\\WSLBackups"]).unwrap();
-        assert!(matches!(parsed.command, Some(Command::Config { action: Some(ConfigCommand::Set { key: ConfigKey::BackupOutput, .. }) })));
+        let parsed =
+            Cli::try_parse_from(["wslim", "config", "set", "backup.output", "D:\\WSLBackups"])
+                .unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Command::Config {
+                action: Some(ConfigCommand::Set {
+                    key: ConfigKey::BackupOutput,
+                    ..
+                })
+            })
+        ));
     }
 
     #[test]
     fn config_shortcut_parses() {
-        let parsed = Cli::try_parse_from(["wslim", "config", "backup.output", "D:\\Backup"]).unwrap();
-        assert!(matches!(parsed.command, Some(Command::Config { action: Some(ConfigCommand::Output { .. }) })));
+        let parsed =
+            Cli::try_parse_from(["wslim", "config", "backup.output", "D:\\Backup"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Command::Config {
+                action: Some(ConfigCommand::Output { .. })
+            })
+        ));
     }
 
     #[test]
     fn none_cleanup_must_be_exclusive() {
-        let opts = CleanupOptions { cleanup: vec![CleanupGroup::None, CleanupGroup::Node] };
+        let opts = CleanupOptions {
+            cleanup: vec![CleanupGroup::None, CleanupGroup::Node],
+        };
         assert!(opts.validate().is_err());
     }
 }
