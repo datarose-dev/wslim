@@ -57,7 +57,9 @@ pub(crate) fn run(
         }
         interactive::ensure_terminal()?;
         eprintln!("Backup of '{distro}' (WSL {version}) will terminate its running processes.");
-        eprintln!("Cleanup changes only a temporary clone; --cleanup none exports the source directly.");
+        eprintln!(
+            "Cleanup changes only a temporary clone; --cleanup none exports the source directly."
+        );
         if !Confirm::new("Continue?").with_default(false).prompt()? {
             return Err("Backup cancelled; nothing changed".into());
         }
@@ -66,16 +68,13 @@ pub(crate) fn run(
     let id = format!("{timestamp}-{}", std::process::id());
     let work = Workspace::new(&output_dir, &id)?;
     let stage = format!("wslim-stage-{id}");
-    let test = format!("wslim-test-{id}");
     wsl::ensure_missing(&stage)?;
-    wsl::ensure_missing(&test)?;
     let raw = work.path.join("original.tar");
     let cleaned = work.path.join("clean.tar");
     let compressed = work
         .path
         .join(format!("backup.tar.{}.partial", format.extension()));
     let stage_dir = work.path.join("stage");
-    let test_dir = work.path.join("test");
     let mut temporary = TemporaryDistros::new(work);
 
     progress.step("Exporting source distro", || {
@@ -83,42 +82,48 @@ pub(crate) fn run(
         wsl::export(&distro, &raw)
     })?;
 
+    let initial_bytes = fs::metadata(&raw)?.len();
+
     let no_cleanup = options.cleanup.cleanup == [crate::cli::CleanupGroup::None];
     if no_cleanup {
         fs::rename(&raw, &cleaned)?;
     } else {
-        progress.step("Importing disposable clone", || temporary.import(&stage, &stage_dir, &raw, version))?;
-        fs::remove_file(&raw)?;
-
-        progress.step("Removing generated dependencies from the clone", || -> Result<()> {
-            let removed = cleanup::run(&stage, Mode::Clean, &options.cleanup)?;
-            eprintln!("Cleanup: {} directories", removed.len());
-            wsl::run(&["--terminate", &stage])
+        output::check_space(&output_dir, "clone import", initial_bytes, non_interactive)?;
+        progress.step("Importing disposable clone", || {
+            temporary.import(&stage, &stage_dir, &raw, version)
         })?;
 
+        progress.step(
+            "Removing generated dependencies from the clone",
+            || -> Result<()> {
+                let removed = cleanup::run(&stage, Mode::Clean, &options.cleanup)?;
+                eprintln!("Cleanup: {} directories", removed.len());
+                wsl::run(&["--terminate", &stage])
+            },
+        )?;
+
+        output::check_space(
+            &output_dir,
+            "cleaned TAR export",
+            initial_bytes,
+            non_interactive,
+        )?;
         progress.step("Exporting cleaned clone", || wsl::export(&stage, &cleaned))?;
 
-        // The cleaned TAR no longer depends on the imported clone. Free its disk
-        // before creating the test distro to keep peak temporary storage lower.
+        // The cleaned TAR no longer depends on the imported clone, so free its disk.
         progress.step("Removing disposable clone", || temporary.unregister(&stage))?;
+        fs::remove_file(&raw)?;
     }
 
-    if !options.no_verify {
-        progress.step("Testing the restored distro", || -> Result<()> {
-            temporary.import(&test, &test_dir, &cleaned, version)?;
-            wsl::run(&["-d", &test, "-u", "root", "--", "/bin/sh", "-c", "exit 0"])?;
-            temporary.unregister(&test)
-        })?;
-    } else {
-        eprintln!("warning: restore boot-test skipped (--no-verify)");
-    }
+    let selected_bytes = fs::metadata(&cleaned)?.len();
+    output::check_space(&output_dir, "compression", selected_bytes, non_interactive)?;
 
     archive::compress(&cleaned, &compressed, format, level, progress)?;
     progress.step("Checking archive integrity", || {
         archive::verify(&compressed, format)
     })?;
 
-    // Publish the archive only after the boot test and checksum verification.
+    // Publish the archive only after checksum verification.
     let bytes = fs::metadata(&compressed)?.len();
     publish_no_clobber(&compressed, &destination)?;
     Ok(BackupResult {

@@ -2,7 +2,7 @@
 
 Minimal Windows CLI for **restorable WSL distribution backups** without generated project dependencies.
 
-`wslim` exports a stopped source distribution, imports a disposable clone, removes selected generated directories **only in that clone**, and creates a verified `.tar.xz` or `.tar.gz` archive using a second native WSL export. With `--cleanup none`, it skips the clone and cleanup, using the source export directly. The original distro's files are never cleaned or unregistered.
+`wslim` exports a stopped source distribution, optionally imports a disposable clone to remove generated directories, and creates a verified `.tar.xz` or `.tar.gz` archive. The original distro's files are never cleaned or unregistered.
 
 Output naming: `{distro}-backup-yyyy-mm-dd-HHmmss.tar.xz` or `.tar.gz` (local Windows time).
 
@@ -19,7 +19,7 @@ Output naming: `{distro}-backup-yyyy-mm-dd-HHmmss.tar.xz` or `.tar.gz` (local Wi
 wslim
 ```
 
-Uses [inquire](https://github.com/mikaelmello/inquire) to select an operation, WSL distribution, cleanup categories and backup settings. The interactive compression menu supports XZ and Gzip, with levels in ascending order: **1 – Fast**, **3 – Standard**, **6 – Balanced (recommended)**, and **9 – Maximum (slow, high memory usage)**. Level 6 is initially selected unless `backup.level` is configured. `--level` accepts levels 0–9, and the old `--xz-level` flag remains an alias. A backup always requires explicit approval before it terminates the source distribution. You can also choose **config** to edit the saved Windows backup directory.
+Backup cleanup offers exactly three choices: **A** exports source directly without cleanup or a temporary distro (default); **B** removes generated Node, PHP, and Rust dependencies in a disposable clone; **C** adds package-manager caches. The preview command keeps its category selector. Compression menu supports XZ and Gzip, with levels **1**, **3**, **6**, and **9**. A backup requires approval before source termination.
 
 ## Non-interactive and scriptable mode
 
@@ -111,7 +111,6 @@ wslim backup dev --output E:\WSLBackups --yes --non-interactive --json
 | `--format xz\|gz` | backup | Override compression format; default `backup.format` or xz |
 | `--level 0..9` | backup | Override compression level; default `backup.level` or 6 |
 | `--xz-level 0..9` | backup | Backwards-compatible alias for `--level` |
-| `--no-verify` | backup | Skip disposable test import and shell boot test |
 | `--as` | restore | New distro name (required) |
 | `--install-dir` | restore | Directory for restored distro (required, must not exist) |
 | `--version 1\|2` | restore | WSL version of the new distro; default 2 |
@@ -119,7 +118,7 @@ wslim backup dev --output E:\WSLBackups --yes --non-interactive --json
 | `--no-progress` | global | Disable spinners and byte progress bars |
 | `--json` | global | Emit exactly one JSON result on stdout |
 
-For backups, `--cleanup none` also skips temporary stage-distro import and cleanup. The optional test-restore remains independent and can still import a temporary verification distro.
+Explicit CLI cleanup defaults and semantics remain unchanged: `--cleanup` defaults to all groups, and `--cleanup none` exports the source directly. Backups never import a test distro.
 
 `--json` writes human-readable errors to stderr and returns a nonzero exit code on failure. The successful JSON payloads have stable, simple shapes:
 
@@ -134,17 +133,18 @@ Spinners from [indicatif](https://github.com/console-rs/indicatif) render on std
 ## Backup lifecycle
 
 1. Stop the selected source distro and export it as a TAR.
-2. With cleanup enabled, import that TAR into an isolated temporary distro, preserving WSL version; delete the original TAR after import succeeds.
+2. With cleanup enabled, retain the original TAR until clone import succeeds, then import into an isolated temporary distro preserving WSL version.
 3. Clean only the temporary clone. The source files remain unchanged.
 4. Export the cleaned clone as another TAR, then terminate and unregister the stage distro to free its disk. With `--cleanup none`, use the source TAR directly and skip this stage distro.
-5. Unless `--no-verify` was provided, test-import the selected TAR, run `/bin/sh`, then terminate and unregister the test distro on success.
-6. Compress with the selected XZ or Gzip format, verify the complete compressed stream, and atomically publish the final archive without overwriting an existing path.
-7. Remove the selected TAR and remaining scratch files only when temporary distro ownership and teardown are safely resolved.
+5. Compress the selected TAR, verify the complete compressed stream, and atomically publish the final archive without overwriting an existing path.
+6. Remove the selected TAR and remaining scratch files only when temporary distro ownership and teardown are safely resolved.
 Only successful imports authorize automatic termination and unregistration of temporary distros. A failed or interrupted temporary import, or unresolved termination or unregistration, retains the entire workspace for manual inspection. Successfully imported clones may still be torn down, but unresolved storage is retained. Warnings identify the affected distro and storage paths. A matching registered name after a failed import does not prove ownership and is never automatically unregistered. Automatic teardown assumes no external process replaces a successfully imported temporary distro.
 
-Archive verification reads every concatenated XZ stream or Gzip member and checks its integrity. Restore uses the same complete decoding and checks. `--no-verify` skips only the test import and shell launch, not archive integrity checks. A timestamp collision fails without replacing the existing archive, even if the destination appears during backup.
+Archive verification reads every concatenated XZ stream or Gzip member and checks its integrity. Restore uses the same complete decoding and checks. A timestamp collision fails without replacing the existing archive, even if the destination appears during backup.
 
-The source is never cleaned or unregistered, but the clone is **not a security sandbox**. Copied `/etc/fstab`, `/etc/wsl.conf`, boot commands, or systemd services may mount external storage or start processes before cleanup runs. Use a trusted distro with stable mounts and quiescent workloads. Cleanup guards limit the cleanup script's actions; they do not isolate startup configuration or eliminate concurrent mount or path races. The boot test confirms only a basic shell launch, not every service or project. Back up live external databases separately.
+Disk-space checks use Windows caller-available bytes on the resolved output directory. Their advisory budget is TAR size plus the greater of 25% or 1 GiB. Checks run before clone import, cleaned-TAR export, and compression. The initial source export has no prior reliable estimate and may fail for lack of space. A shortfall prints stage, path, estimate, and available bytes; interactive runs require explicit confirmation (default No), while non-interactive and JSON runs fail. `--yes` does not override this warning. Estimates do not guarantee sufficient space.
+
+The source is never cleaned or unregistered, but the clone is **not a security sandbox**. Copied `/etc/fstab`, `/etc/wsl.conf`, boot commands, or systemd services may mount external storage or start processes before cleanup runs. Use a trusted distro with stable mounts and quiescent workloads. Cleanup guards limit the cleanup script's actions; they do not isolate startup configuration or eliminate concurrent mount or path races. Back up live external databases separately.
 
 ### Cleanup policy
 

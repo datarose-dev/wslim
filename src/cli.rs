@@ -183,10 +183,6 @@ pub(crate) struct BackupArgs {
     #[arg(short = 'y', long)]
     pub(crate) yes: bool,
 
-    /// Skip test-import and shell boot check (archive integrity is still checked).
-    #[arg(long)]
-    pub(crate) no_verify: bool,
-
     /// Archive format (xz or gz); defaults to saved backup.format or xz.
     #[arg(long, value_enum)]
     pub(crate) format: Option<CompressionFormat>,
@@ -233,7 +229,6 @@ mod tests {
             "--output",
             "D:\\Backups",
             "--yes",
-            "--no-verify",
             "--format",
             "gz",
             "--level",
