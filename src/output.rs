@@ -1,12 +1,84 @@
 //! Resolve and verify the backup destination before stopping the source distro.
 
 use crate::{config, interactive, Result};
-use inquire::Text;
+use inquire::{Confirm, Text};
 use std::{
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
 };
+
+const GIB: u64 = 1024 * 1024 * 1024;
+
+pub(crate) fn budget(bytes: u64) -> Result<u64> {
+    let quarter = bytes.checked_add(3).ok_or("Disk-space estimate overflow")? / 4;
+    bytes
+        .checked_add(quarter.max(GIB))
+        .ok_or_else(|| "Disk-space estimate overflow".into())
+}
+
+pub(crate) fn available(path: &Path) -> Result<u64> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetDiskFreeSpaceExW(
+                path: *const u16,
+                available: *mut u64,
+                total: *mut u64,
+                free: *mut u64,
+            ) -> i32;
+        }
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut bytes = 0;
+        // SAFETY: wide is NUL-terminated and output pointer is valid.
+        if unsafe {
+            GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut bytes,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        Ok(bytes)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("Disk-space checks require Windows".into())
+    }
+}
+
+pub(crate) fn check_space(
+    path: &Path,
+    stage: &str,
+    bytes: u64,
+    non_interactive: bool,
+) -> Result<()> {
+    let estimate = budget(bytes)?;
+    let free = available(path)?;
+    if free >= estimate {
+        return Ok(());
+    }
+    eprintln!("warning: {stage} at '{}' estimates {estimate} bytes; {free} bytes available. This heuristic does not guarantee sufficient space.", path.display());
+    if non_interactive {
+        return Err(
+            "Insufficient estimated disk space; non-interactive runs cannot override".into(),
+        );
+    }
+    interactive::ensure_terminal()?;
+    if !Confirm::new("Continue despite estimated disk-space shortfall?")
+        .with_default(false)
+        .prompt()?
+    {
+        return Err("Backup cancelled after disk-space warning".into());
+    }
+    Ok(())
+}
 
 pub(crate) fn resolve(explicit: Option<PathBuf>, non_interactive: bool) -> Result<PathBuf> {
     // Explicit arguments always override the saved preference.
@@ -110,5 +182,11 @@ mod tests {
         fs::write(&file, b"not a directory").unwrap();
         assert!(check_writable(&file).is_err());
         fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn disk_budget_uses_quarter_or_one_gibibyte_margin() {
+        assert_eq!(budget(0).unwrap(), GIB);
+        assert_eq!(budget(GIB * 8).unwrap(), GIB * 10);
     }
 }

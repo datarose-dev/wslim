@@ -1,31 +1,49 @@
 //! A small optional wizard. Explicit subcommands always bypass it.
 
-use crate::{cli::{BackupArgs, CleanupGroup, CleanupOptions, Command, CompressionFormat, RestoreArgs}, config, wsl, Result};
-use inquire::{Confirm, MultiSelect, Select, Text};
-use std::{io::{self, IsTerminal}, path::PathBuf};
+use crate::{
+    cli::{BackupArgs, CleanupGroup, CleanupOptions, Command, CompressionFormat, RestoreArgs},
+    config, wsl, Result,
+};
+use inquire::{MultiSelect, Select, Text};
+use std::{
+    io::{self, IsTerminal},
+    path::PathBuf,
+};
 
 pub(crate) fn ensure_terminal() -> Result<()> {
     if !io::stdin().is_terminal() || !io::stderr().is_terminal() {
-        return Err("Interactive prompts require a terminal; pass a subcommand and all options".into());
+        return Err(
+            "Interactive prompts require a terminal; pass a subcommand and all options".into(),
+        );
     }
     Ok(())
 }
 
 pub(crate) fn choose() -> Result<Command> {
     ensure_terminal()?;
-    let action = Select::new("What would you like to do?", vec!["backup", "preview", "restore", "list", "config"]).prompt()?;
+    let action = Select::new(
+        "What would you like to do?",
+        vec!["backup", "preview", "restore", "list", "config"],
+    )
+    .prompt()?;
     match action {
         "list" => Ok(Command::List),
-        "preview" => Ok(Command::Preview { distro: select_distro()?, cleanup: select_cleanup()? }),
+        "preview" => Ok(Command::Preview {
+            distro: select_distro()?,
+            cleanup: select_cleanup()?,
+        }),
         "backup" => {
             let distro = select_distro()?;
-            let cleanup = select_cleanup()?;
-            let verify = Confirm::new("Test-restore the archive?").with_default(true).prompt()?;
+            let cleanup = select_backup_cleanup()?;
             let format = select_format()?;
             let level = select_level(config::backup_level()?)?;
             Ok(Command::Backup(BackupArgs {
-                distro, output: None, yes: false, no_verify: !verify,
-                format: Some(format), level: Some(level), cleanup,
+                distro,
+                output: None,
+                yes: false,
+                format: Some(format),
+                level: Some(level),
+                cleanup,
             }))
         }
         "config" => Ok(Command::Config { action: None }),
@@ -33,8 +51,15 @@ pub(crate) fn choose() -> Result<Command> {
             let archive = PathBuf::from(Text::new("Archive (.tar.xz or .tar.gz):").prompt()?);
             let name = Text::new("New distro name:").prompt()?;
             let install_dir = PathBuf::from(Text::new("Install directory:").prompt()?);
-            let version = Select::new("WSL version:", vec!["2", "1"]).prompt()?.parse()?;
-            Ok(Command::Restore(RestoreArgs { archive, name, install_dir, version }))
+            let version = Select::new("WSL version:", vec!["2", "1"])
+                .prompt()?
+                .parse()?;
+            Ok(Command::Restore(RestoreArgs {
+                archive,
+                name,
+                install_dir,
+                version,
+            }))
         }
         _ => unreachable!("inquire returned an option outside the provided menu"),
     }
@@ -59,19 +84,40 @@ fn select_format() -> Result<CompressionFormat> {
     let selected = Select::new("Compression format:", names)
         .with_starting_cursor(usize::from(default == CompressionFormat::Gz))
         .prompt()?;
-    Ok(if selected == "gz" { CompressionFormat::Gz } else { CompressionFormat::Xz })
+    Ok(if selected == "gz" {
+        CompressionFormat::Gz
+    } else {
+        CompressionFormat::Xz
+    })
 }
 
 fn select_level(default: u8) -> Result<u8> {
     let presets = vec![
-        CompressionPreset { level: 1, description: "Fast (larger archive)" },
-        CompressionPreset { level: 3, description: "Standard (good speed)" },
-        CompressionPreset { level: 6, description: "Balanced (recommended)" },
-        CompressionPreset { level: 9, description: "Maximum (slow, high memory usage)" },
+        CompressionPreset {
+            level: 1,
+            description: "Fast (larger archive)",
+        },
+        CompressionPreset {
+            level: 3,
+            description: "Standard (good speed)",
+        },
+        CompressionPreset {
+            level: 6,
+            description: "Balanced (recommended)",
+        },
+        CompressionPreset {
+            level: 9,
+            description: "Maximum (slow, high memory usage)",
+        },
     ];
 
     // Preserve the configured default without reordering the options.
-    let selected = match default { 1 => 0, 3 => 1, 9 => 3, _ => 2 };
+    let selected = match default {
+        1 => 0,
+        3 => 1,
+        9 => 3,
+        _ => 2,
+    };
     Ok(Select::new("Compression level:", presets)
         .with_starting_cursor(selected)
         .prompt()?
@@ -87,11 +133,45 @@ fn select_distro() -> Result<String> {
 }
 
 fn select_cleanup() -> Result<CleanupOptions> {
-    let groups = vec![CleanupGroup::Node, CleanupGroup::Php, CleanupGroup::Rust, CleanupGroup::Caches];
+    let groups = vec![
+        CleanupGroup::Node,
+        CleanupGroup::Php,
+        CleanupGroup::Rust,
+        CleanupGroup::Caches,
+    ];
     let chosen = MultiSelect::new("Remove generated dependencies from a temporary clone (clear selection to export source directly):", groups)
-        .with_all_selected_by_default()
+        .with_default(&[0, 1, 2])
         .prompt()?;
-    Ok(CleanupOptions { cleanup: if chosen.is_empty() { vec![CleanupGroup::None] } else { chosen } })
+    Ok(CleanupOptions {
+        cleanup: if chosen.is_empty() {
+            vec![CleanupGroup::None]
+        } else {
+            chosen
+        },
+    })
+}
+
+fn select_backup_cleanup() -> Result<CleanupOptions> {
+    let choices = vec![
+        "A: Export source directly (no cleanup, no temporary distro)",
+        "B: Remove generated Node, PHP, and Rust dependencies in a disposable clone",
+        "C: B plus package-manager caches",
+    ];
+    let selected = Select::new("Backup cleanup:", choices)
+        .with_starting_cursor(0)
+        .prompt()?;
+    Ok(CleanupOptions {
+        cleanup: match selected.chars().next() {
+            Some('A') => vec![CleanupGroup::None],
+            Some('B') => vec![CleanupGroup::Node, CleanupGroup::Php, CleanupGroup::Rust],
+            _ => vec![
+                CleanupGroup::Node,
+                CleanupGroup::Php,
+                CleanupGroup::Rust,
+                CleanupGroup::Caches,
+            ],
+        },
+    })
 }
 
 // Inquire renders options with Display. Keep the enum spellings stable for scripts.
